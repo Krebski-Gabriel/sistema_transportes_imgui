@@ -1,6 +1,6 @@
 // sistema_imgui.cpp
 // Sistema de Gestao de Transportes - ImGui front-end
-// Requer: Dear ImGui, GLFW, OpenGL3, MySQL C client (do XAMPP)
+// Requer: Dear ImGui, GLFW, OpenGL3, MySQL C client
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -17,14 +17,13 @@
 #include <cctype>
 
 // =================================================================
-// 1. INCLUDES CRITICOS (ORDEM IMPORTA)
+// 1. INCLUDES CRITICOS
 // =================================================================
 
-// 1.1 MySQL (Headers)
-// OBS: Deixamos o include absoluto como fallback, mas o comando -I e o ideal.
+// 1.1 MySQL (Header) - Caminho absoluto mantido como fallback
 #include <C:\xampp\mysql\include\mysql.h> 
 
-// 1.2 GLEW Loader (Usando GLEW)
+// 1.2 GLEW Loader
 #define IMGUI_IMPL_OPENGL_LOADER_GLEW 
 
 #if defined(IMGUI_IMPL_OPENGL_LOADER_GL3W)
@@ -37,7 +36,7 @@
 #include <GL/glew.h> 
 #endif
 
-// 1.3 GLFW (Janela/Contexto)
+// 1.3 GLFW (Janela/Contexto) - Caminho absoluto mantido como fallback
 #include <C:\msys64\mingw64\include\GLFW\glfw3.h>
 
 // 1.4 ImGui e Backends
@@ -45,14 +44,18 @@
 #include "backends/imgui_impl_glfw.h"
 #include "backends/imgui_impl_opengl3.h"
 
-// ------------------- Configuracao DB -------------------
+// =================================================================
+// 2. CONFIGURAÇÃO E UTILS
+// =================================================================
+
+// --- Configuração do Banco de Dados ---
 static const char* DB_HOST = "127.0.0.1";
 static const char* DB_USER = "root";
 static const char* DB_PASS = "";
 static const char* DB_NAME = "banco_transportes";
-static unsigned int DB_PORT = 3307; // ajuste se necessario
+static unsigned int DB_PORT = 3307; // Ajuste se necessário
 
-// ------------------- Helpers de validacao -------------------
+// --- Helpers de Validação ---
 static inline std::string trimStr(const std::string &s) {
     size_t l = 0; while (l < s.size() && isspace((unsigned char)s[l])) ++l;
     size_t r = s.size(); while (r > l && isspace((unsigned char)s[r-1])) --r;
@@ -179,7 +182,7 @@ static inline bool validatePositiveNumber(const std::string &s) {
     } 
 }
 
-// ------------------- MySQL helpers -------------------
+// --- MySQL Helpers ---
 static MYSQL* connectDB() {
     MYSQL* conn = mysql_init(NULL);
     if (!conn) {
@@ -187,16 +190,11 @@ static MYSQL* connectDB() {
         return nullptr;
     }
 
-// Força protocolo TCP
+    // Força protocolo TCP e desabilita SSL (Corrige erro 2026)
     unsigned int protocol = MYSQL_PROTOCOL_TCP;
     mysql_options(conn, MYSQL_OPT_PROTOCOL, &protocol);
-
-    // 🔒 DESATIVA TOTALMENTE o uso de SSL (corrige erro 2026)
     unsigned int ssl_mode = SSL_MODE_DISABLED;
     mysql_options(conn, MYSQL_OPT_SSL_MODE, &ssl_mode);
-
-    // 💡 SOLUÇÃO ADICIONAL: Garante que o cliente não tente verificar o certificado do servidor.
-    // O erro 2026 é muitas vezes resolvido desabilitando a verificação de certificado.
     my_bool verify_cert = 0;
     mysql_options(conn, MYSQL_OPT_SSL_VERIFY_SERVER_CERT, &verify_cert);
     
@@ -213,7 +211,7 @@ static MYSQL* connectDB() {
 }
 
 
-
+// Escapa strings para uso seguro em queries SQL
 static std::string escapeString(MYSQL* conn, const std::string &s) {
     if (!conn) return "";
     std::vector<char> buf(s.size()*2 + 1);
@@ -221,6 +219,7 @@ static std::string escapeString(MYSQL* conn, const std::string &s) {
     return std::string(buf.data(), buf.data()+len);
 }
 
+// Verifica se um ID existe em uma tabela (Usado para validação de FK)
 static bool checkIdExists(MYSQL* conn, const std::string &table, const std::string &idField, const std::string &idValue) {
     if (!conn) return false;
     std::string q = "SELECT 1 FROM " + table + " WHERE " + idField + " = " + idValue + " LIMIT 1;";
@@ -232,12 +231,13 @@ static bool checkIdExists(MYSQL* conn, const std::string &table, const std::stri
     return exists;
 }
 
-// Helper para executar SELECT e retornar rows/cols
+// Estrutura para resultados de SELECT
 struct QueryResult {
     std::vector<std::vector<std::string>> rows;
     std::vector<std::string> cols;
 };
 
+// Executa SELECT e retorna os resultados formatados
 static QueryResult runSelect(MYSQL* conn, const std::string &q) {
     QueryResult out;
     if (!conn) return out;
@@ -248,12 +248,14 @@ static QueryResult runSelect(MYSQL* conn, const std::string &q) {
     int num_fields = mysql_num_fields(res);
     MYSQL_FIELD* fields = mysql_fetch_fields(res);
     
+    // Captura nomes das colunas
     for (int i = 0; i < num_fields; ++i) 
         out.cols.push_back(fields[i].name);
         
+    // Captura linhas
     MYSQL_ROW row;
     while ((row = mysql_fetch_row(res))) {
-        unsigned long *lengths = mysql_fetch_lengths(res);
+        // unsigned long *lengths = mysql_fetch_lengths(res); // Não usado, mas mantido para referência
         std::vector<std::string> r;
         for (int i = 0; i < num_fields; ++i) {
             r.push_back(row[i] ? row[i] : std::string(""));
@@ -264,17 +266,18 @@ static QueryResult runSelect(MYSQL* conn, const std::string &q) {
     return out;
 }
 
-// ------------------- Utils GUI -------------------
+// --- Utils GUI ---
 static inline void SmallSeparator() { ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing(); }
 
 // =================================================================
-// FUNÇÃO MODIFICADA: ApplyCustomImGuiStyle()
-// Tema Cinza Escuro com Botões e Inputs em Cinza
+// 3. ESTILO E UI PRINCIPAL
 // =================================================================
+
+// Tema Cinza Escuro Customizado (Dark Mode)
 void ApplyCustomImGuiStyle() {
     ImGuiStyle& style = ImGui::GetStyle();
 
-    // --------- Ajustes de forma e espaçamento ---------
+    // --- Ajustes de forma e espaçamento ---
     style.WindowRounding = 6.0f;
     style.FrameRounding = 5.0f;
     style.GrabRounding = 5.0f;
@@ -287,58 +290,60 @@ void ApplyCustomImGuiStyle() {
     style.WindowBorderSize = 1.0f; // Borda sutil na janela principal
     style.FrameBorderSize = 1.0f; // Contorno para Input Texts
 
-    // Paleta de Cores
+    // --- Paleta de Cores ---
     ImVec4* colors = style.Colors;
 
-    // Fundo da Janela ImGui e elementos relacionados (fundo solido)
-    // O fundo do GL (Clear Color) será o #303030
-    colors[ImGuiCol_WindowBg]         = ImVec4(0.20f, 0.20f, 0.20f, 1.00f); // #333333
-    colors[ImGuiCol_ChildBg]          = ImVec4(0.18f, 0.18f, 0.18f, 1.00f); // #2E2E2E
-    colors[ImGuiCol_PopupBg]          = ImVec4(0.22f, 0.22f, 0.22f, 1.00f); // #383838
+    // Fundo da Janela (opaco, cor #333333)
+    colors[ImGuiCol_WindowBg]         = ImVec4(0.20f, 0.20f, 0.20f, 1.00f); 
+    colors[ImGuiCol_ChildBg]          = ImVec4(0.18f, 0.18f, 0.18f, 1.00f); 
+    colors[ImGuiCol_PopupBg]          = ImVec4(0.22f, 0.22f, 0.22f, 1.00f); 
 
     // Textos
     colors[ImGuiCol_Text]             = ImVec4(0.95f, 0.95f, 0.95f, 1.00f);
     colors[ImGuiCol_TextDisabled]     = ImVec4(0.50f, 0.50f, 0.50f, 1.00f);
 
     // Inputs e campos (Fundo Cinza com Contorno Branco)
-    colors[ImGuiCol_FrameBg]          = ImVec4(0.25f, 0.25f, 0.25f, 1.00f); // Fundo Cinza para inputs
+    colors[ImGuiCol_FrameBg]          = ImVec4(0.25f, 0.25f, 0.25f, 1.00f);
     colors[ImGuiCol_FrameBgHovered]   = ImVec4(0.30f, 0.30f, 0.30f, 1.00f);
     colors[ImGuiCol_FrameBgActive]    = ImVec4(0.35f, 0.35f, 0.35f, 1.00f);
-    colors[ImGuiCol_Border]           = ImVec4(0.85f, 0.85f, 0.85f, 1.00f); // Contorno Branco para Inputs e Janelas
+    colors[ImGuiCol_Border]           = ImVec4(0.85f, 0.85f, 0.85f, 1.00f);
 
-    // Botões (Tons de Cinza)
-    colors[ImGuiCol_Button]           = ImVec4(0.30f, 0.30f, 0.30f, 1.00f); // Cinza Médio
-    colors[ImGuiCol_ButtonHovered]    = ImVec4(0.40f, 0.40f, 0.40f, 1.00f); // Cinza Claro
-    colors[ImGuiCol_ButtonActive]     = ImVec4(0.50f, 0.50f, 0.50f, 1.00f); // Cinza Mais Claro
+    // Botões
+    colors[ImGuiCol_Button]           = ImVec4(0.30f, 0.30f, 0.30f, 1.00f);
+    colors[ImGuiCol_ButtonHovered]    = ImVec4(0.40f, 0.40f, 0.40f, 1.00f);
+    colors[ImGuiCol_ButtonActive]     = ImVec4(0.50f, 0.50f, 0.50f, 1.00f);
 
-    // Headers / Tabelas
+    // Headers / Tabelas / Tabs
     colors[ImGuiCol_Header]           = ImVec4(0.25f, 0.25f, 0.25f, 1.00f);
     colors[ImGuiCol_HeaderHovered]    = ImVec4(0.35f, 0.35f, 0.35f, 1.00f);
     colors[ImGuiCol_HeaderActive]     = ImVec4(0.40f, 0.40f, 0.40f, 1.00f);
     colors[ImGuiCol_TableHeaderBg]    = ImVec4(0.22f, 0.22f, 0.22f, 1.00f);
-
-    // Separadores, barras, seletores
-    colors[ImGuiCol_Separator]        = ImVec4(0.40f, 0.40f, 0.40f, 1.00f);
-    colors[ImGuiCol_ResizeGrip]       = ImVec4(0.35f, 0.35f, 0.35f, 1.00f);
-
-    // Tabs
     colors[ImGuiCol_Tab]              = ImVec4(0.20f, 0.20f, 0.20f, 1.00f);
     colors[ImGuiCol_TabHovered]       = ImVec4(0.35f, 0.35f, 0.35f, 1.00f);
     colors[ImGuiCol_TabActive]        = ImVec4(0.30f, 0.30f, 0.30f, 1.00f);
     colors[ImGuiCol_TabUnfocused]     = ImVec4(0.15f, 0.15f, 0.15f, 1.00f);
     colors[ImGuiCol_TabUnfocusedActive]= ImVec4(0.25f, 0.25f, 0.25f, 1.00f);
 
-    // Checkboxes e radio buttons (Usando azul para contraste)
-    colors[ImGuiCol_CheckMark]        = ImVec4(0.25f, 0.55f, 0.95f, 1.00f); 
-
-    // Scrollbar
+    // Separadores, barras, seletores
+    colors[ImGuiCol_Separator]        = ImVec4(0.40f, 0.40f, 0.40f, 1.00f);
+    colors[ImGuiCol_ResizeGrip]       = ImVec4(0.35f, 0.35f, 0.35f, 1.00f);
+    colors[ImGuiCol_CheckMark]        = ImVec4(0.25f, 0.55f, 0.95f, 1.00f); // Azul para destaque
     colors[ImGuiCol_ScrollbarBg]      = ImVec4(0.18f, 0.18f, 0.18f, 1.00f);
     colors[ImGuiCol_ScrollbarGrab]    = ImVec4(0.40f, 0.40f, 0.40f, 1.00f);
 }
 
+// Desenha a cor de fundo sólida no OpenGL
+void RenderGradientBackground(int display_w, int display_h) {
+    // Cor de fundo sólida #303030 em RGB
+    glClearColor(0.188f, 0.188f, 0.188f, 1.00f); 
+    glClear(GL_COLOR_BUFFER_BIT);
+}
 
+// =================================================================
+// 4. RENDERS DAS ABAS (CRUD)
+// =================================================================
 
-// ------------------- Tab: Motorista -------------------
+// --- Tab: Motorista ---
 void RenderMotoristaTab(MYSQL* conn) {
     static char nomeBuf[128] = "";
     static char cnhBuf[32] = "";
@@ -352,7 +357,7 @@ void RenderMotoristaTab(MYSQL* conn) {
     ImGui::InputText("CNH##cadm", cnhBuf, IM_ARRAYSIZE(cnhBuf));
     ImGui::InputText("Salario##cadm", salarioBuf, IM_ARRAYSIZE(salarioBuf));
     
-    // **ESTILO CADASTRAR (VERDE PARA AÇÃO POSITIVA)**
+    // Estilo CADASTRAR (Verde)
     ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.10f, 0.50f, 0.10f, 1.00f));
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.15f, 0.60f, 0.15f, 1.00f));
     ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.05f, 0.40f, 0.05f, 1.00f));
@@ -385,16 +390,16 @@ void RenderMotoristaTab(MYSQL* conn) {
         }
     }
     
-    ImGui::PopStyleColor(3); // Fim estilo Cadastrar
+    ImGui::PopStyleColor(3);
     
     ImGui::TextWrapped("%s", status.c_str());
     SmallSeparator();
 
-    // ************* CORREÇÃO SOLICITADA: Botão Atualizar ao lado do ID *************
+    // --- Atualização ---
     ImGui::InputText("ID para update", updIdBuf, IM_ARRAYSIZE(updIdBuf));
     ImGui::SameLine();
     
-    // **ESTILO ATUALIZAR (AZUL PARA AÇÃO MODIFICADORA)**
+    // Estilo ATUALIZAR (Azul)
     ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.10f, 0.40f, 0.70f, 1.00f));
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.15f, 0.50f, 0.80f, 1.00f));
     ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.05f, 0.30f, 0.60f, 1.00f));
@@ -429,13 +434,13 @@ void RenderMotoristaTab(MYSQL* conn) {
         }
     }
     
-    ImGui::PopStyleColor(3); // Fim estilo Atualizar
+    ImGui::PopStyleColor(3);
     
-    
+    // --- Exclusão ---
     ImGui::InputText("ID para excluir", delIdBuf, IM_ARRAYSIZE(delIdBuf));
     ImGui::SameLine();
     
-    // **ESTILO EXCLUIR (VERMELHO DE ALERTA)**
+    // Estilo EXCLUIR (Vermelho)
     ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.80f, 0.10f, 0.10f, 1.00f));
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.90f, 0.20f, 0.20f, 1.00f));
     ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.70f, 0.05f, 0.05f, 1.00f));
@@ -456,11 +461,11 @@ void RenderMotoristaTab(MYSQL* conn) {
         }
     }
     
-    ImGui::PopStyleColor(3); // Fim estilo Excluir
+    ImGui::PopStyleColor(3);
     
     SmallSeparator();
 
-    // Mostrar tabela (Listagem agora é feita apenas pelo CollapsingHeader)
+    // --- Listagem (Tabela) ---
     if (ImGui::CollapsingHeader("Lista de Motoristas (clique para expandir)")) {
         QueryResult qr = runSelect(conn, "SELECT ID_MOTORISTA, NOME, CNH, SALARIO FROM MOTORISTA;");
         
@@ -481,7 +486,7 @@ void RenderMotoristaTab(MYSQL* conn) {
     }
 }
 
-// ------------------- Tab: Veiculo -------------------
+// --- Tab: Veiculo ---
 void RenderVeiculoTab(MYSQL* conn) {
     static char placaBuf[32] = "";
     static char modeloBuf[128] = "";
@@ -497,7 +502,7 @@ void RenderVeiculoTab(MYSQL* conn) {
     ImGui::InputText("Ano", anoBuf, IM_ARRAYSIZE(anoBuf));
     ImGui::InputText("Quilometragem", kmBuf, IM_ARRAYSIZE(kmBuf));
     
-    // **ESTILO CADASTRAR (VERDE PARA AÇÃO POSITIVA)**
+    // Estilo CADASTRAR (Verde)
     ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.10f, 0.50f, 0.10f, 1.00f));
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.15f, 0.60f, 0.15f, 1.00f));
     ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.05f, 0.40f, 0.05f, 1.00f));
@@ -528,15 +533,16 @@ void RenderVeiculoTab(MYSQL* conn) {
         }
     }
     
-    ImGui::PopStyleColor(3); // Fim estilo Cadastrar
+    ImGui::PopStyleColor(3);
     
     ImGui::TextWrapped("%s", status.c_str());
     SmallSeparator();
 
+    // --- Atualização ---
     ImGui::InputText("ID para update", updIdBuf, IM_ARRAYSIZE(updIdBuf));
     ImGui::SameLine();
     
-    // **ESTILO ATUALIZAR (AZUL PARA AÇÃO MODIFICADORA)**
+    // Estilo ATUALIZAR (Azul)
     ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.10f, 0.40f, 0.70f, 1.00f));
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.15f, 0.50f, 0.80f, 1.00f));
     ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.05f, 0.30f, 0.60f, 1.00f));
@@ -571,12 +577,13 @@ void RenderVeiculoTab(MYSQL* conn) {
         }
     }
     
-    ImGui::PopStyleColor(3); // Fim estilo Atualizar
+    ImGui::PopStyleColor(3);
     
+    // --- Exclusão ---
     ImGui::InputText("ID para excluir##v", delIdBuf, IM_ARRAYSIZE(delIdBuf));
     ImGui::SameLine();
     
-    // **ESTILO EXCLUIR (VERMELHO DE ALERTA)**
+    // Estilo EXCLUIR (Vermelho)
     ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.80f, 0.10f, 0.10f, 1.00f));
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.90f, 0.20f, 0.20f, 1.00f));
     ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.70f, 0.05f, 0.05f, 1.00f));
@@ -597,10 +604,11 @@ void RenderVeiculoTab(MYSQL* conn) {
         }
     }
     
-    ImGui::PopStyleColor(3); // Fim estilo Excluir
+    ImGui::PopStyleColor(3);
     
     SmallSeparator();
 
+    // --- Listagem (Tabela) ---
     if (ImGui::CollapsingHeader("Lista de Veiculos")) {
         QueryResult qr = runSelect(conn, "SELECT ID_VEICULO, PLACA, MODELO, ANO, QUILOMETRAGEM FROM VEICULO;");
         
@@ -621,7 +629,7 @@ void RenderVeiculoTab(MYSQL* conn) {
     }
 }
 
-// ------------------- Tab: Cliente -------------------
+// --- Tab: Cliente ---
 void RenderClienteTab(MYSQL* conn) {
     static char nomeBuf[128] = "";
     static char cnpjBuf[32] = "";
@@ -635,7 +643,7 @@ void RenderClienteTab(MYSQL* conn) {
     ImGui::InputText("CNPJ/CPF##ccliente", cnpjBuf, IM_ARRAYSIZE(cnpjBuf));
     ImGui::InputText("Endereco##ccliente", enderecoBuf, IM_ARRAYSIZE(enderecoBuf));
     
-    // **ESTILO CADASTRAR (VERDE PARA AÇÃO POSITIVA)**
+    // Estilo CADASTRAR (Verde)
     ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.10f, 0.50f, 0.10f, 1.00f));
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.15f, 0.60f, 0.15f, 1.00f));
     ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.05f, 0.40f, 0.05f, 1.00f));
@@ -663,15 +671,16 @@ void RenderClienteTab(MYSQL* conn) {
         }
     }
     
-    ImGui::PopStyleColor(3); // Fim estilo Cadastrar
+    ImGui::PopStyleColor(3);
     
     ImGui::TextWrapped("%s", status.c_str());
     SmallSeparator();
 
+    // --- Atualização ---
     ImGui::InputText("ID para update##cl", updIdBuf, IM_ARRAYSIZE(updIdBuf));
     ImGui::SameLine();
     
-    // **ESTILO ATUALIZAR (AZUL PARA AÇÃO MODIFICADORA)**
+    // Estilo ATUALIZAR (Azul)
     ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.10f, 0.40f, 0.70f, 1.00f));
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.15f, 0.50f, 0.80f, 1.00f));
     ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.05f, 0.30f, 0.60f, 1.00f));
@@ -705,12 +714,13 @@ void RenderClienteTab(MYSQL* conn) {
         }
     }
     
-    ImGui::PopStyleColor(3); // Fim estilo Atualizar
+    ImGui::PopStyleColor(3);
 
+    // --- Exclusão ---
     ImGui::InputText("ID para excluir##cl", delIdBuf, IM_ARRAYSIZE(delIdBuf));
     ImGui::SameLine();
     
-    // **ESTILO EXCLUIR (VERMELHO DE ALERTA)**
+    // Estilo EXCLUIR (Vermelho)
     ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.80f, 0.10f, 0.10f, 1.00f));
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.90f, 0.20f, 0.20f, 1.00f));
     ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.70f, 0.05f, 0.05f, 1.00f));
@@ -732,10 +742,11 @@ void RenderClienteTab(MYSQL* conn) {
         }
     }
     
-    ImGui::PopStyleColor(3); // Fim estilo Excluir
+    ImGui::PopStyleColor(3);
     
     SmallSeparator();
 
+    // --- Listagem (Tabela) ---
     if (ImGui::CollapsingHeader("Lista de Clientes")) {
         QueryResult qr = runSelect(conn, "SELECT ID_CLIENTE, NOME, CNPJ_CPF, ENDERECO FROM CLIENTE;");
         
@@ -756,7 +767,7 @@ void RenderClienteTab(MYSQL* conn) {
     }
 }
 
-// ------------------- Tab: Carga -------------------
+// --- Tab: Carga ---
 void RenderCargaTab(MYSQL* conn) {
     static char descBuf[256] = "";
     static char pesoBuf[32] = "";
@@ -774,7 +785,7 @@ void RenderCargaTab(MYSQL* conn) {
     ImGui::InputText("ID Cliente", idClienteBuf, IM_ARRAYSIZE(idClienteBuf));
     ImGui::InputText("ID Rota", idRotaBuf, IM_ARRAYSIZE(idRotaBuf));
     
-    // **ESTILO CADASTRAR (VERDE PARA AÇÃO POSITIVA)**
+    // Estilo CADASTRAR (Verde)
     ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.10f, 0.50f, 0.10f, 1.00f));
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.15f, 0.60f, 0.15f, 1.00f));
     ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.05f, 0.40f, 0.05f, 1.00f));
@@ -808,15 +819,16 @@ void RenderCargaTab(MYSQL* conn) {
         }
     }
     
-    ImGui::PopStyleColor(3); // Fim estilo Cadastrar
+    ImGui::PopStyleColor(3);
     
     ImGui::TextWrapped("%s", status.c_str());
     SmallSeparator();
 
+    // --- Atualização ---
     ImGui::InputText("ID para update##cd", updIdBuf, IM_ARRAYSIZE(updIdBuf));
     ImGui::SameLine();
     
-    // **ESTILO ATUALIZAR (AZUL PARA AÇÃO MODIFICADORA)**
+    // Estilo ATUALIZAR (Azul)
     ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.10f, 0.40f, 0.70f, 1.00f));
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.15f, 0.50f, 0.80f, 1.00f));
     ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.05f, 0.30f, 0.60f, 1.00f));
@@ -854,12 +866,13 @@ void RenderCargaTab(MYSQL* conn) {
         }
     }
 
-    ImGui::PopStyleColor(3); // Fim estilo Atualizar
-    
+    ImGui::PopStyleColor(3);
+
+    // --- Exclusão ---
     ImGui::InputText("ID para excluir##cd", delIdBuf, IM_ARRAYSIZE(delIdBuf));
     ImGui::SameLine();
     
-    // **ESTILO EXCLUIR (VERMELHO DE ALERTA)**
+    // Estilo EXCLUIR (Vermelho)
     ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.80f, 0.10f, 0.10f, 1.00f));
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.90f, 0.20f, 0.20f, 1.00f));
     ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.70f, 0.05f, 0.05f, 1.00f));
@@ -881,10 +894,11 @@ void RenderCargaTab(MYSQL* conn) {
         }
     }
     
-    ImGui::PopStyleColor(3); // Fim estilo Excluir
+    ImGui::PopStyleColor(3);
     
     SmallSeparator();
 
+    // --- Listagem (Tabela) ---
     if (ImGui::CollapsingHeader("Lista de Cargas")) {
         QueryResult qr = runSelect(conn, "SELECT ID_CARGA, DESCRICAO, PESO, VALOR, ID_CLIENTE, ID_ROTA FROM CARGA;");
         
@@ -905,7 +919,7 @@ void RenderCargaTab(MYSQL* conn) {
     }
 }
 
-// ------------------- Tab: Rota -------------------
+// --- Tab: Rota ---
 void RenderRotaTab(MYSQL* conn) {
     static char origemBuf[128] = "";
     static char destinoBuf[128] = "";
@@ -923,7 +937,7 @@ void RenderRotaTab(MYSQL* conn) {
     ImGui::InputText("ID Motorista", idMotoristaBuf, IM_ARRAYSIZE(idMotoristaBuf));
     ImGui::InputText("ID Veiculo", idVeiculoBuf, IM_ARRAYSIZE(idVeiculoBuf));
     
-    // **ESTILO CADASTRAR (VERDE PARA AÇÃO POSITIVA)**
+    // Estilo CADASTRAR (Verde)
     ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.10f, 0.50f, 0.10f, 1.00f));
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.15f, 0.60f, 0.15f, 1.00f));
     ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.05f, 0.40f, 0.05f, 1.00f));
@@ -957,15 +971,16 @@ void RenderRotaTab(MYSQL* conn) {
         }
     }
     
-    ImGui::PopStyleColor(3); // Fim estilo Cadastrar
+    ImGui::PopStyleColor(3);
     
     ImGui::TextWrapped("%s", status.c_str());
     SmallSeparator();
 
+    // --- Atualização ---
     ImGui::InputText("ID para update##r", updIdBuf, IM_ARRAYSIZE(updIdBuf));
     ImGui::SameLine();
     
-    // **ESTILO ATUALIZAR (AZUL PARA AÇÃO MODIFICADORA)**
+    // Estilo ATUALIZAR (Azul)
     ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.10f, 0.40f, 0.70f, 1.00f));
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.15f, 0.50f, 0.80f, 1.00f));
     ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.05f, 0.30f, 0.60f, 1.00f));
@@ -1003,12 +1018,13 @@ void RenderRotaTab(MYSQL* conn) {
         }
     }
 
-    ImGui::PopStyleColor(3); // Fim estilo Atualizar
+    ImGui::PopStyleColor(3);
 
+    // --- Exclusão ---
     ImGui::InputText("ID para excluir##r", delIdBuf, IM_ARRAYSIZE(delIdBuf));
     ImGui::SameLine();
     
-    // **ESTILO EXCLUIR (VERMELHO DE ALERTA)**
+    // Estilo EXCLUIR (Vermelho)
     ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.80f, 0.10f, 0.10f, 1.00f));
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.90f, 0.20f, 0.20f, 1.00f));
     ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.70f, 0.05f, 0.05f, 1.00f));
@@ -1030,10 +1046,11 @@ void RenderRotaTab(MYSQL* conn) {
         }
     }
     
-    ImGui::PopStyleColor(3); // Fim estilo Excluir
+    ImGui::PopStyleColor(3);
     
     SmallSeparator();
 
+    // --- Listagem (Tabela) ---
     if (ImGui::CollapsingHeader("Lista de Rotas")) {
         QueryResult qr = runSelect(conn, "SELECT ID_ROTA, ORIGEM, DESTINO, DISTANCIA, ID_MOTORISTA, ID_VEICULO FROM ROTA;");
         
@@ -1054,7 +1071,7 @@ void RenderRotaTab(MYSQL* conn) {
     }
 }
 
-// ------------------- Tab: Manutencao -------------------
+// --- Tab: Manutencao ---
 void RenderManutencaoTab(MYSQL* conn) {
     static char idVeicBuf[16] = "";
     static char dataBuf[16] = "";
@@ -1070,7 +1087,7 @@ void RenderManutencaoTab(MYSQL* conn) {
     ImGui::InputText("Custo", custoBuf, IM_ARRAYSIZE(custoBuf));
     ImGui::InputText("Descricao", descBuf, IM_ARRAYSIZE(descBuf));
     
-    // **ESTILO CADASTRAR (VERDE PARA AÇÃO POSITIVA)**
+    // Estilo CADASTRAR (Verde)
     ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.10f, 0.50f, 0.10f, 1.00f));
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.15f, 0.60f, 0.15f, 1.00f));
     ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.05f, 0.40f, 0.05f, 1.00f));
@@ -1101,15 +1118,16 @@ void RenderManutencaoTab(MYSQL* conn) {
         }
     }
     
-    ImGui::PopStyleColor(3); // Fim estilo Cadastrar
+    ImGui::PopStyleColor(3);
     
     ImGui::TextWrapped("%s", status.c_str());
     SmallSeparator();
 
+    // --- Atualização ---
     ImGui::InputText("ID para update##m", updIdBuf, IM_ARRAYSIZE(updIdBuf));
     ImGui::SameLine();
     
-    // **ESTILO ATUALIZAR (AZUL PARA AÇÃO MODIFICADORA)**
+    // Estilo ATUALIZAR (Azul)
     ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.10f, 0.40f, 0.70f, 1.00f));
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.15f, 0.50f, 0.80f, 1.00f));
     ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.05f, 0.30f, 0.60f, 1.00f));
@@ -1129,7 +1147,7 @@ void RenderManutencaoTab(MYSQL* conn) {
             if (!data.empty()) setpart += "DATA='" + escapeString(conn,data) + "',";
             if (!custo.empty()) setpart += "CUSTO=" + custo + ",";
             if (!desc.empty()) setpart += "DESCRICAO='" + escapeString(conn,desc) + "',";
-            if (!idVeic.empty()) setpart += "ID_VEICULO=" + idVeic + ","; // Permite mudar o veiculo
+            if (!idVeic.empty()) setpart += "ID_VEICULO=" + idVeic + ","; 
 
             if (setpart.empty()) 
                 status = "Nada para atualizar.";
@@ -1145,12 +1163,13 @@ void RenderManutencaoTab(MYSQL* conn) {
         }
     }
 
-    ImGui::PopStyleColor(3); // Fim estilo Atualizar
+    ImGui::PopStyleColor(3);
 
+    // --- Exclusão ---
     ImGui::InputText("ID para excluir##m", delIdBuf, IM_ARRAYSIZE(delIdBuf));
     ImGui::SameLine();
     
-    // **ESTILO EXCLUIR (VERMELHO DE ALERTA)**
+    // Estilo EXCLUIR (Vermelho)
     ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.80f, 0.10f, 0.10f, 1.00f));
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.90f, 0.20f, 0.20f, 1.00f));
     ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.70f, 0.05f, 0.05f, 1.00f));
@@ -1172,10 +1191,11 @@ void RenderManutencaoTab(MYSQL* conn) {
         }
     }
     
-    ImGui::PopStyleColor(3); // Fim estilo Excluir
+    ImGui::PopStyleColor(3);
     
     SmallSeparator();
 
+    // --- Listagem (Tabela) ---
     if (ImGui::CollapsingHeader("Lista de Manutencoes")) {
         QueryResult qr = runSelect(conn, "SELECT ID_MANUTENCAO, ID_VEICULO, DATA, CUSTO, DESCRICAO FROM MANUTENCAO;");
         
@@ -1197,24 +1217,9 @@ void RenderManutencaoTab(MYSQL* conn) {
 }
 
 
-// ---------------------------------------------------------------
-// FUNÇÃO MODIFICADA: RenderGradientBackground()
-// Agora apenas define uma cor sólida no fundo do OpenGL.
-// ---------------------------------------------------------------
-void RenderGradientBackground(int display_w, int display_h) {
-    // Cor de fundo sólida (o #303030 em RGB)
-    glClearColor(0.188f, 0.188f, 0.188f, 1.00f); 
-    glClear(GL_COLOR_BUFFER_BIT);
-    // Removemos o código de desenho de degradê.
-}
-
-// ---------------------------------------------------------------
-// FUNÇÃO REMOVIDA: ApplyWindowGradient()
-// Não é mais necessária, pois o fundo da janela ImGui agora é opaco.
-// ---------------------------------------------------------------
-
-
-// ------------------- Main -------------------
+// =================================================================
+// 5. MAIN
+// =================================================================
 
 static void glfw_error_callback(int error, const char* description) {
     fprintf(stderr, "GLFW Error %d: %s\n", error, description);
@@ -1225,12 +1230,12 @@ int main(int, char**) {
     glfwSetErrorCallback(glfw_error_callback);
     if (!glfwInit()) return 1;
 
-    // 2. Setup OpenGL/GLSL version
+    // 2. Setup OpenGL/GLSL version (GLFW hints)
     const char* glsl_version = "#version 130";
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 0);
 
-    // 3. Create window with graphics context
+    // 3. Cria a janela
     GLFWwindow* window = glfwCreateWindow(1000, 600, "Sistema de Gestao de Transportes", NULL, NULL);
     if (window == NULL) return 1;
     glfwMakeContextCurrent(window);
@@ -1246,14 +1251,11 @@ int main(int, char**) {
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     ImGuiIO& io = ImGui::GetIO(); (void)io;
-    io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;   // Enable Keyboard Controls
+    io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
 
-    // 6. Setup Dear ImGui style
+    // 6. Setup Dear ImGui style (Aplica o tema customizado)
     ImGui::StyleColorsDark();
-    // ** APLICAR O ESTILO CUSTOMIZADO (Seu novo tema) **
     ApplyCustomImGuiStyle();
-
-    ImGuiStyle& style = ImGui::GetStyle();
 
     // 7. Setup Platform/Renderer backends
     ImGui_ImplGlfw_InitForOpenGL(window, true);
@@ -1265,8 +1267,8 @@ int main(int, char**) {
         fprintf(stderr, "Erro ao conectar ao banco de dados: Host=%s, Porta=%d. Verifique o XAMPP e as credenciais. Erro: %s\n", DB_HOST, DB_PORT, mysql_error(db_conn));
     }
     
-    // Cor de fundo mais escura para combinar com o tema (o #303030 já será aplicado no loop)
-    ImVec4 clear_color = ImVec4(0.188f, 0.188f, 0.188f, 1.00f); // #303030 em RGB
+    // Cor de fundo para limpar o OpenGL (#303030)
+    // ImVec4 clear_color = ImVec4(0.188f, 0.188f, 0.188f, 1.00f); 
 
     // 9. Main loop
     while (!glfwWindowShouldClose(window)) {
@@ -1279,12 +1281,12 @@ int main(int, char**) {
 
         // 10. Renderizar a Interface Principal
         {
-            // ************* CORREÇÃO SOLICITADA: Redimensionamento com a Janela Nativa *************
+            // Janela principal preenchendo o viewport (ImGuiViewport)
             ImGuiViewport* viewport = ImGui::GetMainViewport();
             ImGui::SetNextWindowPos(viewport->Pos);
             ImGui::SetNextWindowSize(viewport->Size);
             
-            // Flags para a janela principal preencher a tela e não ter decorações/bordas
+            // Flags para a janela principal (preenche a tela e sem bordas/decorações)
             ImGui::Begin("Sistema de Gestao de Transportes", NULL, 
                 ImGuiWindowFlags_MenuBar | 
                 ImGuiWindowFlags_NoDecoration | 
@@ -1293,14 +1295,14 @@ int main(int, char**) {
                 ImGuiWindowFlags_NoBringToFrontOnFocus
             );
 
-            // Removida a chamada a ApplyWindowGradient()
-
+            // Aviso de falha na conexão com o DB
             if (!db_conn) {
                 ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.0f, 0.0f, 1.0f)); // Vermelho
                 ImGui::TextWrapped("ATENCAO: Nao foi possivel conectar ao banco de dados! Verifique o XAMPP. As operacoes de CRUD falharao.");
                 ImGui::PopStyleColor();
             }
 
+            // Renderiza as abas de CRUD
             if (ImGui::BeginTabBar("Tabs")) {
                 if (ImGui::BeginTabItem("Motorista")) {
                     RenderMotoristaTab(db_conn);
@@ -1337,14 +1339,13 @@ int main(int, char**) {
         glfwGetFramebufferSize(window, &display_w, &display_h);
         glViewport(0, 0, display_w, display_h);
 
-        // 1️⃣ Limpa a tela com a cor sólida #303030
+        // 1. Limpa a tela com a cor sólida #303030
         RenderGradientBackground(display_w, display_h);
 
-        // 2️⃣ Renderiza a interface
+        // 2. Renderiza a interface do ImGui
         ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
 
-
-        // Update and Render additional Platform Windows (para Docking)
+        // Update e Renderização de Janelas Adicionais (para Docking, desativado no código original)
         if (false) { 
             GLFWwindow* backup_current_context = glfwGetCurrentContext();
             glfwMakeContextCurrent(backup_current_context);
